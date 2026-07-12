@@ -100,7 +100,7 @@ the complete program normally.
 To inspect every registered mapping:
 
 ```bash
-./build/bin/dnn-opt --list-available-queries
+<dnn-mlir-build>/bin/dnn-opt --list-available-queries
 ```
 
 The output is grouped by family:
@@ -137,40 +137,62 @@ Torch-to-DNN mappings.
 
 - CMake 3.22 or newer
 - Ninja
-- A compatible Torch-MLIR source checkout and build
+- An initialized Torch-MLIR submodule and compatible build
 - `ccache` is recommended
 
-The default layout expects the projects to be siblings:
-
-```text
-workspace/
-├── torch-mlir/
-├── build-torch-mlir/
-└── dnn-mlir/
-```
-
-From `dnn-mlir`:
+Clone the repository with its Torch-MLIR submodule:
 
 ```bash
-cmake -G Ninja -S . -B build \
-  -DMLIR_DIR=../build-torch-mlir/lib/cmake/mlir \
-  -DLLVM_DIR=../build-torch-mlir/lib/cmake/llvm \
-  -DLLVM_EXTERNAL_LIT=../build-torch-mlir/bin/llvm-lit \
+git clone --recurse-submodules <repository-url>
+```
+
+For an existing clone:
+
+```bash
+git submodule update --init --recursive
+```
+
+Build `externals/torch-mlir` following its upstream instructions. Torch-MLIR
+and DNN-MLIR are both normal out-of-tree CMake projects: their build
+directories may be placed anywhere and are never created implicitly.
+
+```text
+dnn-mlir/
+├── cmake/
+├── externals/
+│   └── torch-mlir/  # Pinned upstream submodule
+├── include/
+├── lib/
+├── test/
+└── tools/
+```
+
+Configure DNN-MLIR with the locations of the MLIR and LLVM packages produced by
+your chosen Torch-MLIR build directory:
+
+```bash
+cmake -G Ninja -S <dnn-mlir-source> -B <dnn-mlir-build> \
+  -DMLIR_DIR=<torch-mlir-build>/lib/cmake/mlir \
+  -DLLVM_DIR=<torch-mlir-build>/lib/cmake/llvm \
+  -DLLVM_EXTERNAL_LIT=<torch-mlir-build>/bin/llvm-lit \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
 
-cmake --build build -j2
-cmake --build build --target check-dnn-mlir -j2
+cmake --build <dnn-mlir-build> -j2
+cmake --build <dnn-mlir-build> --target check-dnn-mlir -j2
 ```
+
+DNN-MLIR infers the Torch-MLIR build root from `MLIR_DIR`. For a nonstandard
+layout, set `DNN_MLIR_TORCH_MLIR_BINARY_DIR` explicitly.
 
 ## Usage
 
 Preserve all supported LSTM forms and lower everything else toward Linalg:
 
 ```bash
-./build/bin/dnn-opt \
+<dnn-mlir-build>/bin/dnn-opt \
   --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.lstm' \
   input.mlir
 ```
@@ -178,7 +200,7 @@ Preserve all supported LSTM forms and lower everything else toward Linalg:
 Capture one exact Torch form:
 
 ```bash
-./build/bin/dnn-opt \
+<dnn-mlir-build>/bin/dnn-opt \
   --dnn-backend-to-linalg-on-tensors-backend-pipeline='queries=aten.gru.data' \
   input.mlir
 ```
@@ -187,6 +209,9 @@ Capture one exact Torch form:
 
 ```text
 dnn-mlir/
+├── cmake/                         # Dependency and build integration
+├── externals/
+│   └── torch-mlir/                # Pinned upstream submodule
 ├── include/dnn-mlir/
 │   ├── Conversion/TorchToDNN/  # Pass, pipeline, and registry interfaces
 │   └── Dialect/DNN/IR/         # DNN dialect and operation definitions
