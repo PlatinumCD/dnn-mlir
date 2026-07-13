@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 func.func @convert_fx_aten_lstm_data(
     %data: !torch.vtensor<[7,4],f32>,

@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 func.func @convert_mm(
     %lhs: !torch.vtensor<[2,3],f32>,
@@ -19,12 +19,8 @@ func.func @convert_pre_reduce_mm(
     %lhs: !torch.tensor<[2,3],f32>,
     %rhs: !torch.tensor<[3,4],f32>) -> !torch.tensor<[2,4],f32> {
   // CHECK-LABEL: func.func @convert_pre_reduce_mm
-  // CHECK: torch.copy.to_vtensor
-  // CHECK: torch_c.to_builtin_tensor
-  // CHECK: dnn.mm
-  // CHECK: torch_c.from_builtin_tensor
-  // CHECK: torch.copy.to_tensor
-  // CHECK-NOT: torch.aten.mm
+  // CHECK: torch.aten.mm
+  // CHECK-NOT: dnn.mm
   %result = torch.aten.mm %lhs, %rhs
       : !torch.tensor<[2,3],f32>, !torch.tensor<[3,4],f32>
         -> !torch.tensor<[2,4],f32>

@@ -1,4 +1,4 @@
-// RUN: dnn-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='queries=aten.relu' %s | FileCheck %s
+// RUN: dnn-mlir-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='queries=aten.relu' %s | FileCheck %s
 
 module {
   func.func private @__torch__.Activation.forward(

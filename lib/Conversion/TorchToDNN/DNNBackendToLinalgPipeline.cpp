@@ -13,6 +13,7 @@
 #include "torch-mlir/Conversion/TorchToSCF/TorchToSCF.h"
 #include "torch-mlir/Conversion/TorchToTMTensor/TorchToTMTensor.h"
 #include "torch-mlir/Conversion/TorchToTensor/TorchToTensor.h"
+#include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
 #include "torch-mlir/Dialect/Torch/Transforms/Passes.h"
 #include "torch-mlir/Dialect/TorchConversion/Transforms/Passes.h"
 
@@ -68,6 +69,28 @@ void addTorchScriptNormalization(OpPassManager &pm) {
       torch::Torch::createRecomposeComplexOpsPass());
 }
 
+class NormalizeTorchInputPass
+    : public PassWrapper<NormalizeTorchInputPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(NormalizeTorchInputPass)
+
+  StringRef getArgument() const final { return "dnn-normalize-torch-input"; }
+  StringRef getDescription() const final {
+    return "Normalize TorchScript object graphs while accepting flat FX IR";
+  }
+
+  void runOnOperation() final {
+    ModuleOp module = getOperation();
+    if (module.getOps<torch::Torch::NnModuleOp>().empty())
+      return;
+
+    OpPassManager normalization(ModuleOp::getOperationName());
+    addTorchScriptNormalization(normalization);
+    if (failed(runPipeline(normalization, module)))
+      signalPassFailure();
+  }
+};
+
 void addTorchLinalgBackendLowering(OpPassManager &pm,
                                    bool allowNonFinites) {
   pm.addNestedPass<func::FuncOp>(
@@ -97,21 +120,50 @@ void addTorchLinalgBackendLowering(OpPassManager &pm,
 
 } // namespace
 
+// Establish the value-semantics boundary before the post-functionalization
+// DNN capture. ReduceOpVariants rewrites trailing-underscore ATen operations
+// to functional equivalents plus explicit overwrites; MaximizeValueSemantics
+// then resolves those overwrites through known aliases. Complex decomposition
+// remains in the later backend pipeline so high-level operations stay visible.
+void addTorchValueSemanticsNormalization(OpPassManager &pm,
+                                         StringRef extraLibrary) {
+  pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
+  pm.addNestedPass<func::FuncOp>(
+      torch::Torch::createRecomposeComplexOpsPass());
+  pm.addNestedPass<func::FuncOp>(
+      torch::Torch::createReduceOpVariantsPass(extraLibrary));
+  pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
+  pm.addNestedPass<func::FuncOp>(
+      torch::Torch::createMaximizeValueSemanticsPass());
+  pm.addPass(torch::Torch::createRefinePublicReturnPass());
+  pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
+}
+
 void registerDNNBackendToLinalgPipeline() {
   PassPipelineRegistration<PipelineOptions>(
       "dnn-backend-to-linalg-on-tensors-backend-pipeline",
-      "Lower TorchScript through DNN capture to the Linalg-on-tensors "
+      "Lower FX or TorchScript IR through DNN capture to the Linalg-on-tensors "
       "backend (without the upstream final verifier)",
       [](OpPassManager &pm, const PipelineOptions &options) {
-        // Capture before Torch reduces or legalizes generic torch.operator
-        // forms. The remaining Torch operations still run through Torch-MLIR's
-        // simplification, refinement, decomposition, and backend conversions.
+        // Capture already-functional operations, normalize mutation and
+        // aliases, then capture the newly functionalized forms. Leave complex
+        // decomposition to the normal Torch backend pipeline below.
         SmallVector<std::string> queries = getQueries(options);
         SmallVector<std::string> captures = getCaptures(options);
 
-        addTorchScriptNormalization(pm);
+        pm.addPass(std::make_unique<NormalizeTorchInputPass>());
 
         if (!queries.empty() || !captures.empty()) {
+          // Capture value-semantic high-level and opaque operator forms before
+          // ReduceOpVariants legalizes them. The shared conversion guard makes
+          // this phase ignore every mutable/in-place operation.
+          pm.addNestedPass<func::FuncOp>(
+              createConvertTorchToDNNPass(queries, captures));
+          pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
+
+          // Functionalize the skipped mutable operations, then give their
+          // functional equivalents a second opportunity for DNN capture.
+          addTorchValueSemanticsNormalization(pm, options.extraLibrary);
           pm.addNestedPass<func::FuncOp>(
               createConvertTorchToDNNPass(queries, captures));
           pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
@@ -123,6 +175,7 @@ void registerDNNBackendToLinalgPipeline() {
         torchOptions.extraLibrary = options.extraLibrary;
         torch::Torch::createTorchSimplificationPipeline(pm, torchOptions);
         addTorchLinalgBackendLowering(pm, options.allowNonFinites);
+        pm.addPass(createVerifyDNNBackendContractPass());
       });
 }
 

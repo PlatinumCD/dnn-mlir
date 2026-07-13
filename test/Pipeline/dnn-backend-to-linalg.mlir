@@ -1,5 +1,5 @@
-// RUN: dnn-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.linear' %s | FileCheck %s --check-prefix=SELECTED
-// RUN: dnn-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline %s | FileCheck %s --check-prefix=NONE
+// RUN: dnn-mlir-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.linear' %s | FileCheck %s --check-prefix=SELECTED
+// RUN: dnn-mlir-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline %s | FileCheck %s --check-prefix=NONE
 
 module attributes {torch.debug_module_name = "M"} {
   func.func private @__torch__.M.forward(

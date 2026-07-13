@@ -22,6 +22,8 @@ std::optional<TensorBridgeType> getTensorBridgeType(Type type);
 std::string canonicalizeOperationName(llvm::StringRef operation);
 bool isOperationSelected(llvm::ArrayRef<std::string> selectedOperations,
                          llvm::StringRef operation);
+bool hasValueSemanticsForCapture(Operation *operation);
+bool hasSupportedValuesForCapture(Operation *operation);
 std::optional<Attribute> getConstantTorchAttribute(Value value);
 
 Value materializeBuiltinTensor(PatternRewriter &rewriter, Location loc,
@@ -32,6 +34,15 @@ Value materializeTorchTensor(PatternRewriter &rewriter, Location loc,
                              Value value,
                              const TensorBridgeType &bridgeType);
 
+void populateNamedStructuredPattern(
+    RewritePatternSet &patterns,
+    llvm::ArrayRef<std::string> selectedOperations,
+    llvm::StringRef operationName, bool preserveKind = false);
+void populateNamedStructuredOperatorPattern(
+    RewritePatternSet &patterns,
+    llvm::ArrayRef<std::string> selectedOperations,
+    llvm::StringRef operationName, bool preserveKind = false);
+
 void populateMatrixPatterns(RewritePatternSet &patterns,
                             llvm::ArrayRef<std::string> selectedOperations);
 void populateAffinePatterns(RewritePatternSet &patterns,
@@ -39,10 +50,28 @@ void populateAffinePatterns(RewritePatternSet &patterns,
 void populateActivationPatterns(
     RewritePatternSet &patterns,
     llvm::ArrayRef<std::string> selectedOperations);
+void populateAttentionPatterns(
+    RewritePatternSet &patterns,
+    llvm::ArrayRef<std::string> selectedOperations);
 void populateConvolutionPatterns(
     RewritePatternSet &patterns,
     llvm::ArrayRef<std::string> selectedOperations);
+void populateEmbeddingPatterns(
+    RewritePatternSet &patterns,
+    llvm::ArrayRef<std::string> selectedOperations);
 void populateRecurrentPatterns(
+    RewritePatternSet &patterns,
+    llvm::ArrayRef<std::string> selectedOperations);
+void populateNormalizationPatterns(
+    RewritePatternSet &patterns,
+    llvm::ArrayRef<std::string> selectedOperations);
+void populatePoolingPatterns(
+    RewritePatternSet &patterns,
+    llvm::ArrayRef<std::string> selectedOperations);
+void populateElementwisePatterns(
+    RewritePatternSet &patterns,
+    llvm::ArrayRef<std::string> selectedOperations);
+void populateShapePatterns(
     RewritePatternSet &patterns,
     llvm::ArrayRef<std::string> selectedOperations);
 

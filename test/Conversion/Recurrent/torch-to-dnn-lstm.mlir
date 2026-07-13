@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 module {
   func.func @convert_fx_aten_lstm(

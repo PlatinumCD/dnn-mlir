@@ -1,10 +1,13 @@
 #include "dnn-mlir/Conversion/TorchToDNN/Passes.h"
 #include "dnn-mlir/Conversion/TorchToDNN/Pipelines.h"
+#include "dnn-mlir/Conversion/TorchToDNN/Activation/ActivationPatterns.h"
 #include "dnn-mlir/Conversion/TorchToDNN/CaptureRegistry.h"
+#include "dnn-mlir/Conversion/TorchToDNN/Normalization/NormalizationPatterns.h"
 #include "dnn-mlir/Conversion/TorchToDNN/TorchToDNNPatterns.h"
 
 #include "dnn-mlir/Dialect/DNN/IR/DNNDialect.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -33,12 +36,14 @@ namespace TorchConversion = mlir::torch::TorchConversion;
 namespace torch_to_dnn {
 
 std::optional<TensorBridgeType> getTensorBridgeType(Type type) {
-  auto tensorType = dyn_cast<Torch::BaseTensorType>(type);
+  // DNN is a value-semantic boundary. Mutable !torch.tensor values must be
+  // functionalized by Torch-MLIR before any conversion pattern can bridge
+  // them into the DNN dialect.
+  auto tensorType = dyn_cast<Torch::ValueTensorType>(type);
   if (!tensorType || !tensorType.hasSizes() || !tensorType.hasDtype())
     return std::nullopt;
 
-  Torch::ValueTensorType valueTensorType =
-      tensorType.getWithValueSemantics();
+  Torch::ValueTensorType valueTensorType = tensorType;
   auto builtinType =
       dyn_cast_or_null<RankedTensorType>(valueTensorType.toBuiltinTensor());
   if (!builtinType)
@@ -73,6 +78,41 @@ bool isOperationSelected(ArrayRef<std::string> selectedOperations,
     if (canonicalizeOperationName(selected) == operation)
       return true;
   return false;
+}
+
+bool hasValueSemanticsForCapture(Operation *operation) {
+  if (operation->hasTrait<
+          Torch::OpTrait::IsTrailingUnderscoreInplaceVariant>())
+    return false;
+
+  auto isMutableTensor = [](Value value) {
+    return isa<Torch::NonValueTensorType>(value.getType());
+  };
+  return llvm::none_of(operation->getOperands(), isMutableTensor) &&
+         llvm::none_of(operation->getResults(), isMutableTensor);
+}
+
+bool hasSupportedValuesForCapture(Operation *operation) {
+  if (!hasValueSemanticsForCapture(operation))
+    return false;
+
+  // This check must remain side-effect free: patterns run it before creating
+  // tensor bridges. A nonconstant Torch value cannot cross the DNN boundary,
+  // so leave the complete source operation for Torch-MLIR to lower instead.
+  for (Value operand : operation->getOperands()) {
+    if (getTensorBridgeType(operand.getType()) ||
+        getConstantTorchAttribute(operand))
+      continue;
+    if (operand.getType().getDialect().getNamespace() == "torch")
+      return false;
+  }
+  for (Value result : operation->getResults()) {
+    if (getTensorBridgeType(result.getType()))
+      continue;
+    if (result.getType().getDialect().getNamespace() == "torch")
+      return false;
+  }
+  return true;
 }
 
 std::optional<Attribute> getConstantTorchAttribute(Value value) {
@@ -157,12 +197,32 @@ public:
     SmallVector<std::string> selectedOperations =
         torch_to_dnn::resolveCaptureQueries(queries, captures);
 
+    // Reconstruct high-level operations that the FX frontend decomposes before
+    // importing into MLIR. Keep this phase separate so generic elementwise
+    // captures cannot consume part of a recognizable subgraph first.
+    RewritePatternSet fusionPatterns(&getContext());
+    torch_to_dnn::populateDecomposedGeluFusionPatterns(
+        fusionPatterns, selectedOperations);
+    torch_to_dnn::populateDecomposedLayerNormFusionPatterns(
+        fusionPatterns, selectedOperations);
+    if (failed(
+            applyPatternsGreedily(getOperation(), std::move(fusionPatterns)))) {
+      signalPassFailure();
+      return;
+    }
+
     RewritePatternSet patterns(&getContext());
     torch_to_dnn::populateMatrixPatterns(patterns, selectedOperations);
     torch_to_dnn::populateAffinePatterns(patterns, selectedOperations);
     torch_to_dnn::populateActivationPatterns(patterns, selectedOperations);
+    torch_to_dnn::populateAttentionPatterns(patterns, selectedOperations);
     torch_to_dnn::populateConvolutionPatterns(patterns, selectedOperations);
+    torch_to_dnn::populateEmbeddingPatterns(patterns, selectedOperations);
+    torch_to_dnn::populateElementwisePatterns(patterns, selectedOperations);
+    torch_to_dnn::populateNormalizationPatterns(patterns, selectedOperations);
+    torch_to_dnn::populatePoolingPatterns(patterns, selectedOperations);
     torch_to_dnn::populateRecurrentPatterns(patterns, selectedOperations);
+    torch_to_dnn::populateShapePatterns(patterns, selectedOperations);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }
@@ -186,6 +246,8 @@ createConvertTorchToDNNPass(ArrayRef<std::string> queries,
 
 void registerTorchToDNNPasses() {
   PassRegistration<ConvertTorchToDNNPass>();
+  registerPass([] { return createTestRestoreDNNToTorchPass(); });
+  registerPass([] { return createVerifyDNNBackendContractPass(); });
 
   struct TorchScriptPipelineOptions
       : public PassPipelineOptions<TorchScriptPipelineOptions> {
@@ -212,9 +274,15 @@ void registerTorchToDNNPasses() {
         pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
         pm.addNestedPass<func::FuncOp>(
             torch::Torch::createRecomposeComplexOpsPass());
-        if (!options.queries.empty() || !options.captures.empty())
+        if (!options.queries.empty() || !options.captures.empty()) {
           pm.addNestedPass<func::FuncOp>(createConvertTorchToDNNPass(
               options.queries, options.captures));
+          pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
+          addTorchValueSemanticsNormalization(pm);
+          pm.addNestedPass<func::FuncOp>(createConvertTorchToDNNPass(
+              options.queries, options.captures));
+          pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
+        }
       });
 
   registerDNNBackendToLinalgPipeline();

@@ -18,6 +18,21 @@ def DNN_MmOp : DNN_Op<"mm", [Pure]> {
   let hasVerifier = 1;
 }
 
+def DNN_MatmulOp : DNN_Op<"matmul", [Pure]> {
+  let summary = "Rank-polymorphic matrix multiplication";
+  let description = [{
+    Computes PyTorch-style matrix multiplication for tensor operands of rank
+    one or greater. Vector, matrix, batched-matrix, and broadcasted batch
+    dimension forms are supported.
+  }];
+  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = [{
+    $lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def DNN_LinearOp : DNN_Op<"linear", [Pure]> {
   let summary = "Dense linear transformation";
   let description = [{
@@ -38,12 +53,50 @@ def DNN_LinearOp : DNN_Op<"linear", [Pure]> {
   let hasVerifier = 1;
 }
 
+// Structured neural-network operations share a flexible operand/result form
+// because their Torch schemas include optional tensors and scalar/list
+// configuration. Tensor values are bridged to builtin tensors; constant
+// configuration is stored with its original operand position.
+class DNN_StructuredOp<string mnemonic, string opSummary>
+    : DNN_Op<mnemonic, [DNN_ParameterMetadata]> {
+  let summary = opSummary;
+  let arguments = (ins
+    Variadic<AnyRankedTensor>:$operands,
+    OptionalAttr<StrAttr>:$kind,
+    OptionalAttr<DenseI32ArrayAttr>:$parameter_indices,
+    OptionalAttr<ArrayAttr>:$parameters
+  );
+  let results = (outs Variadic<AnyRankedTensor>:$results);
+  let assemblyFormat = [{
+    $operands attr-dict `:` functional-type($operands, $results)
+  }];
+}
+
+def DNN_BatchNormOp : DNN_StructuredOp<
+    "batch_norm", "Batch normalization">;
+def DNN_LayerNormOp : DNN_StructuredOp<
+    "layer_norm", "Layer normalization">;
+def DNN_ScaledDotProductAttentionOp : DNN_StructuredOp<
+    "scaled_dot_product_attention", "Scaled dot-product attention">;
+def DNN_MaxPool2dOp : DNN_StructuredOp<
+    "max_pool2d", "Two-dimensional max pooling">;
+def DNN_AdaptiveAvgPool2dOp : DNN_StructuredOp<
+    "adaptive_avg_pool2d", "Two-dimensional adaptive average pooling">;
+def DNN_AddOp : DNN_StructuredOp<
+    "add", "Elementwise tensor addition">;
+def DNN_MulOp : DNN_StructuredOp<
+    "mul", "Elementwise tensor multiplication">;
+def DNN_EmbeddingOp : DNN_StructuredOp<
+    "embedding", "Embedding table lookup">;
+def DNN_FlattenOp : DNN_StructuredOp<
+    "flatten", "Contiguous-dimension flattening">;
+
 // Each Torch activation has its own DNN operation. They share this structural
 // base because Torch schemas carry different scalar, optional, and auxiliary
 // tensor operands. Constant scalar parameters are stored in `parameters` and
 // their original operand positions in `parameter_indices`.
 class DNN_ActivationOp<string mnemonic, string activationSummary>
-    : DNN_Op<mnemonic> {
+    : DNN_Op<mnemonic, [DNN_ParameterMetadata]> {
   let summary = activationSummary;
   let description = [{
     Preserves a Torch activation as a distinct high-level DNN operation.
@@ -51,11 +104,11 @@ class DNN_ActivationOp<string mnemonic, string activationSummary>
     parameters are retained as attributes for later lowering.
   }];
   let arguments = (ins
-    Variadic<AnyType>:$operands,
+    Variadic<AnyRankedTensor>:$operands,
     OptionalAttr<DenseI32ArrayAttr>:$parameter_indices,
     OptionalAttr<ArrayAttr>:$parameters
   );
-  let results = (outs Variadic<AnyType>:$results);
+  let results = (outs Variadic<AnyRankedTensor>:$results);
   let assemblyFormat = [{
     $operands attr-dict `:` functional-type($operands, $results)
   }];
@@ -75,7 +128,6 @@ def DNN_MishOp : DNN_ActivationOp<"mish", "Mish activation">;
 def DNN_PreluOp : DNN_ActivationOp<"prelu", "PReLU activation">;
 def DNN_ReluOp : DNN_ActivationOp<"relu", "ReLU activation">;
 def DNN_Relu6Op : DNN_ActivationOp<"relu6", "ReLU6 activation">;
-def DNN_ReluInplaceOp : DNN_ActivationOp<"relu_inplace", "In-place ReLU activation">;
 def DNN_RreluOp : DNN_ActivationOp<"rrelu", "Randomized ReLU activation">;
 def DNN_RreluWithNoiseFunctionalOp : DNN_ActivationOp<
     "rrelu_with_noise_functional", "Functional randomized ReLU activation">;
@@ -112,7 +164,7 @@ def DNN_TanhBackwardOp : DNN_ActivationOp<"tanh_backward", "Tanh backward operat
 def DNN_ThresholdBackwardOp : DNN_ActivationOp<
     "threshold_backward", "Threshold backward operation">;
 
-def DNN_ConvolutionOp : DNN_Op<"convolution"> {
+def DNN_ConvolutionOp : DNN_Op<"convolution", [DNN_ParameterMetadata]> {
   let summary = "Preserved neural-network convolution operation";
   let description = [{
     Preserves a selected Torch convolution-family operation as a high-level
@@ -121,12 +173,12 @@ def DNN_ConvolutionOp : DNN_Op<"convolution"> {
     including groups, stride, padding, dilation, and transposition flags.
   }];
   let arguments = (ins
-    Variadic<AnyType>:$operands,
+    Variadic<AnyRankedTensor>:$operands,
     StrAttr:$kind,
     OptionalAttr<DenseI32ArrayAttr>:$parameter_indices,
     OptionalAttr<ArrayAttr>:$parameters
   );
-  let results = (outs Variadic<AnyType>:$results);
+  let results = (outs Variadic<AnyRankedTensor>:$results);
   let assemblyFormat = [{
     $operands attr-dict `:` functional-type($operands, $results)
   }];
@@ -136,7 +188,7 @@ def DNN_ConvolutionOp : DNN_Op<"convolution"> {
 // `operand_groups` attribute records the original grouping (for example,
 // input, hidden/cell state, and parameter lists for aten.lstm.input), while
 // scalar and optional arguments are retained in `parameters`.
-def DNN_LstmOp : DNN_Op<"lstm"> {
+def DNN_LstmOp : DNN_Op<"lstm", [DNN_ParameterMetadata]> {
   let summary = "Preserved high-level LSTM operation";
   let description = [{
     Preserves a Torch ATen LSTM as a first-class DNN operation. Tensor operands
@@ -156,7 +208,7 @@ def DNN_LstmOp : DNN_Op<"lstm"> {
   }];
 }
 
-def DNN_GruOp : DNN_Op<"gru"> {
+def DNN_GruOp : DNN_Op<"gru", [DNN_ParameterMetadata]> {
   let summary = "Preserved high-level GRU operation";
   let description = [{
     Preserves a Torch ATen gated recurrent unit as a first-class DNN
@@ -176,7 +228,7 @@ def DNN_GruOp : DNN_Op<"gru"> {
   }];
 }
 
-def DNN_RnnOp : DNN_Op<"rnn"> {
+def DNN_RnnOp : DNN_Op<"rnn", [DNN_ParameterMetadata]> {
   let summary = "Preserved high-level vanilla RNN operation";
   let description = [{
     Preserves a Torch ATen vanilla RNN as a first-class DNN operation. The

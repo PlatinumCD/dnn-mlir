@@ -1,2 +1,1 @@
-add_subdirectory(dnn-opt)
-
+add_subdirectory(dnn-mlir-opt)

@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 func.func @convert_aten_conv_tbc(%input: !torch.vtensor<[5,2,8],f32>, %weight: !torch.vtensor<[3,2,3],f32>, %bias: !torch.vtensor<[3],f32>) -> !torch.vtensor<[5,2,8],f32> {
   %pad = torch.constant.int 1

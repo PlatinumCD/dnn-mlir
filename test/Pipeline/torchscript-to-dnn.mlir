@@ -1,4 +1,4 @@
-// RUN: dnn-opt -torchscript-to-dnn-pipeline='captures=dnn.mm' %s | FileCheck %s
+// RUN: dnn-mlir-opt -torchscript-to-dnn-pipeline='captures=dnn.mm' %s | FileCheck %s
 
 module attributes {torch.debug_module_name = "M"} {
   func.func private @__torch__.M.forward(

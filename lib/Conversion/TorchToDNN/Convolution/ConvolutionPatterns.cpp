@@ -20,6 +20,10 @@ public:
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
+    if (!hasSupportedValuesForCapture(op))
+      return rewriter.notifyMatchFailure(
+          op, "DNN capture requires value-semantic, representable values");
+
     SmallVector<Value> operands;
     SmallVector<int32_t> parameterIndices;
     SmallVector<Attribute> parameters;
@@ -58,7 +62,7 @@ public:
     state.addAttribute("kind", rewriter.getStringAttr(operationName));
     if (!parameters.empty()) {
       state.addAttribute("parameter_indices",
-                        rewriter.getI32ArrayAttr(parameterIndices));
+                        rewriter.getDenseI32ArrayAttr(parameterIndices));
       state.addAttribute("parameters", rewriter.getArrayAttr(parameters));
     }
     Operation *convolution = rewriter.create(state);

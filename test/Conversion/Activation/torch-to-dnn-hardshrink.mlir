@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 func.func @convert_aten_hardshrink(%input: !torch.vtensor<[2,4],f32>) -> !torch.vtensor<[2,4],f32> {
   %alpha = torch.constant.float 0.1

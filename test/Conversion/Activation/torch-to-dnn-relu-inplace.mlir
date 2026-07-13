@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 func.func @convert_aten_reluinplace(%input: !torch.tensor<[2,4],f32>) -> !torch.tensor<[2,4],f32> {
   %result = torch.aten.relu_ %input
@@ -7,6 +7,5 @@ func.func @convert_aten_reluinplace(%input: !torch.tensor<[2,4],f32>) -> !torch.
 }
 
 // CHECK-LABEL: func.func @convert_aten_reluinplace
-// CHECK: dnn.relu_inplace
-// CHECK-NOT: torch.aten.relu_
-
+// CHECK: torch.aten.relu_
+// CHECK-NOT: dnn.

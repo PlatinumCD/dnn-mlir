@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 func.func @convert_aten_conv3d(%input: !torch.vtensor<[1,2,5,5,5],f32>, %weight: !torch.vtensor<[4,2,3,3,3],f32>, %bias: !torch.vtensor<[4],f32>) -> !torch.vtensor<[1,4,3,3,3],f32> {
   %int1 = torch.constant.int 1

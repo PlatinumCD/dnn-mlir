@@ -1,10 +1,10 @@
-add_llvm_executable(dnn-opt
-  dnn-opt.cpp
+add_llvm_executable(dnn-mlir-opt
+  dnn-mlir-opt.cpp
 )
 
-llvm_update_compile_flags(dnn-opt)
+llvm_update_compile_flags(dnn-mlir-opt)
 
-target_link_libraries(dnn-opt PRIVATE
+target_link_libraries(dnn-mlir-opt PRIVATE
   DNNIR
   DNNTorchToDNN
   MLIRArithDialect

@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 func.func @convert_aten_rreluwithnoisebackward(%input: !torch.vtensor<[2,4],f32>, %grad: !torch.vtensor<[2,4],f32>, %noise: !torch.vtensor<[2,4],f32>) -> !torch.vtensor<[2,4],f32> {
   %lower = torch.constant.float 0.125

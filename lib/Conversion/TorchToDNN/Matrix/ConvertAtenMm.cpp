@@ -1,3 +1,4 @@
+#include "dnn-mlir/Conversion/TorchToDNN/Matrix/MatrixPatterns.h"
 #include "dnn-mlir/Conversion/TorchToDNN/TorchToDNNPatterns.h"
 
 #include "dnn-mlir/Dialect/DNN/IR/DNNOps.h"
@@ -41,8 +42,8 @@ public:
 
 } // namespace
 
-void populateMatrixPatterns(RewritePatternSet &patterns,
-                            ArrayRef<std::string> selectedOperations) {
+void populateAtenMmPattern(RewritePatternSet &patterns,
+                           ArrayRef<std::string> selectedOperations) {
   if (isOperationSelected(selectedOperations, "aten.mm"))
     patterns.add<ConvertAtenMmPattern>(patterns.getContext());
 }

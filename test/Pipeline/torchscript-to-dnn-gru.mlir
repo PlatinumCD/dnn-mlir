@@ -1,5 +1,5 @@
-// RUN: dnn-opt -torchscript-to-dnn-pipeline='captures=dnn.gru' %s | FileCheck %s
-// RUN: dnn-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.gru' %s | FileCheck %s --check-prefix=LINALG
+// RUN: dnn-mlir-opt -torchscript-to-dnn-pipeline='captures=dnn.gru' %s | FileCheck %s
+// RUN: dnn-mlir-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.gru' %s | FileCheck %s --check-prefix=LINALG
 
 module {
   func.func private @__torch__.GRU.forward(

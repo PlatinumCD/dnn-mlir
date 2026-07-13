@@ -1,242 +1,321 @@
 # DNN-MLIR
 
-DNN-MLIR is an out-of-tree MLIR project for preserving selected neural-network
-operations while lowering the rest of a PyTorch program through
+DNN-MLIR is an experimental, out-of-tree MLIR project that preserves selected
+neural-network operations as high-level `dnn.*` operations while lowering the
+rest of a PyTorch program to Linalg through
 [Torch-MLIR](https://github.com/llvm/torch-mlir).
 
-It introduces a small `dnn` dialect and a standalone `dnn-opt` driver. Users
-choose the high-level operations they want to keep, such as `dnn.lstm` or
-`dnn.convolution`; unmatched Torch operations continue through Torch-MLIR's
-existing Linalg-on-tensors lowering. Torch-MLIR itself is not modified.
+The project provides a standalone `dnn-mlir-opt` driver and one integrated
+backend pipeline. It composes with a pinned Torch-MLIR checkout and does not
+modify or fork Torch-MLIR.
 
-## Table of Contents
+> **Project status:** DNN-MLIR is under active development. The capture pipeline,
+> dialect, tests, and installable CMake package are working; a production
+> runtime and DNN-to-hardware lowering are not yet provided.
 
-- [Overview](#overview)
-- [How It Works](#how-it-works)
-- [Captures and Queries](#captures-and-queries)
-- [Supported Operations](#supported-operations)
-- [Build](#build)
-- [Usage](#usage)
-- [Project Structure](#project-structure)
-- [Project Status](#project-status)
+## Contents
 
-## Overview
+- [Why DNN-MLIR?](#why-dnn-mlir)
+- [Quick example](#quick-example)
+- [Pipeline](#pipeline)
+- [Selecting operations](#selecting-operations)
+- [Supported operations](#supported-operations)
+- [Build and test](#build-and-test)
+- [Install](#install)
+- [Design contracts](#design-contracts)
+- [Repository layout](#repository-layout)
+- [Current limitations](#current-limitations)
 
-DNN-MLIR creates mixed MLIR containing:
+## Why DNN-MLIR?
 
-- high-level `dnn.*` operations selected by the user; and
-- standard Linalg, tensor, arithmetic, and control-flow operations produced by
-  Torch-MLIR for everything else.
+Torch-MLIR normally decomposes and lowers PyTorch operations into progressively
+lower-level dialects. That is the right path for general-purpose compilation,
+but it removes the high-level identity of operations that a DNN optimizer or
+accelerator backend may want to recognize directly.
 
-For example, an LSTM can remain visible as:
+DNN-MLIR adds a configurable interception layer:
+
+- selected operations remain visible as `dnn.linear`, `dnn.convolution`,
+  `dnn.lstm`, and other DNN operations;
+- every unselected Torch operation follows Torch-MLIR's existing
+  Linalg-on-tensors lowering; and
+- the result is valid mixed DNN and Linalg IR ready for downstream compiler
+  work.
+
+DNN-MLIR does **not** lower captured operations back to Linalg. Its purpose is
+to preserve their semantics and abstraction level for a later DNN-aware
+optimizer or backend.
+
+## Quick example
+
+Given Torch dialect IR containing a linear layer followed by ReLU:
 
 ```mlir
-%result:3 = dnn.lstm %input, %h0, %c0, %weights ...
-    : (...) -> (...)
+func.func @forward(
+    %input: !torch.vtensor<[2,3],f32>,
+    %weight: !torch.vtensor<[4,3],f32>,
+    %bias: !torch.vtensor<[4],f32>) -> !torch.vtensor<[2,4],f32> {
+  %0 = torch.aten.linear %input, %weight, %bias
+      : !torch.vtensor<[2,3],f32>, !torch.vtensor<[4,3],f32>,
+        !torch.vtensor<[4],f32> -> !torch.vtensor<[2,4],f32>
+  %1 = torch.aten.relu %0
+      : !torch.vtensor<[2,4],f32> -> !torch.vtensor<[2,4],f32>
+  return %1 : !torch.vtensor<[2,4],f32>
+}
 ```
 
-while a following ReLU lowers normally to `linalg.generic`.
+Run the integrated backend pipeline and capture only the linear operation:
 
-This provides a clean interception point for future DNN-specific analysis,
-optimization, fusion, and backend lowering without maintaining a fork of
-Torch-MLIR.
+```bash
+build/bin/dnn-mlir-opt \
+  --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.linear' \
+  input.mlir
+```
 
-## How It Works
+The result preserves the linear layer while Torch-MLIR lowers ReLU:
+
+```mlir
+func.func @forward(
+    %input: tensor<2x3xf32>,
+    %weight: tensor<4x3xf32>,
+    %bias: tensor<4xf32>) -> tensor<2x4xf32> {
+  %0 = dnn.linear %input, %weight, %bias
+      : tensor<2x3xf32>, tensor<4x3xf32>, tensor<4xf32>
+        -> tensor<2x4xf32>
+  %1 = linalg.generic ... ins(%0 : tensor<2x4xf32>) ...
+      -> tensor<2x4xf32>
+  return %1 : tensor<2x4xf32>
+}
+```
+
+The complete executable example lives in
+[`test/Pipeline/fx-backend-to-linalg.mlir`](test/Pipeline/fx-backend-to-linalg.mlir).
+
+## Pipeline
 
 ```mermaid
-flowchart TD
-    A[PyTorch / TorchScript] --> B[Torch-MLIR import]
+flowchart LR
+    A[PyTorch program] --> B[Torch-MLIR import]
     B --> C[Canonicalize and recompose]
-    C --> D{DNN-MLIR capture}
-    D -->|Selected| E[dnn.*]
-    D -->|Unmatched| F[Torch-MLIR lowering]
-    F --> G[Linalg]
+    C --> D{Selected for capture?}
+    D -->|Yes| E[dnn.*]
+    D -->|No| F[Torch-MLIR backend lowering]
+    F --> G[Linalg on tensors]
     E --> H[Mixed DNN + Linalg IR]
     G --> H
 ```
 
-The capture pass bridges Torch tensors to builtin ranked tensors and preserves
-constant configuration as operation attributes. The integrated pipeline then
-uses Torch-MLIR's simplification, refinement, decomposition, and backend
-conversion passes for unmatched Torch operations.
-
-No DNN-to-Linalg lowering is performed. Captured `dnn.*` operations remain
-high level in the final mixed IR.
-
-## Captures and Queries
-
-DNN-MLIR supports two complementary selectors.
-
-### Captures
-
-A capture names the DNN operation wanted in the result:
+The public entry point is:
 
 ```text
-captures=dnn.gru
+--dnn-backend-to-linalg-on-tensors-backend-pipeline
 ```
 
-This enables every registered Torch form that produces `dnn.gru`, including
-both padded and packed-sequence GRUs.
+Internally, the pipeline canonicalizes Torch IR, reconstructs supported
+high-level patterns where possible, captures the requested operations,
+functionalizes mutation, and delegates unmatched operations to Torch-MLIR. A
+final backend-contract verifier rejects residual Torch operations, Torch types,
+conversion bridges, and unresolved casts.
 
-### Queries
+## Selecting operations
 
-A query selects one exact Torch operation:
+The pipeline accepts two complementary selectors:
 
-```text
-queries=aten.gru.data
-```
+| Selector | Meaning | Example |
+| --- | --- | --- |
+| `captures` | Select the DNN operation wanted in the result | `captures=dnn.lstm` |
+| `queries` | Select one exact source Torch operation | `queries=aten.lstm.data` |
 
-This captures only the packed-sequence GRU form and produces `dnn.gru`.
+A capture enables every registered source form that produces that DNN
+operation. For example, `captures=dnn.lstm` handles both padded and packed LSTM
+forms. A query is narrower: `queries=aten.lstm.data` captures only that exact
+packed-sequence form, but still produces `dnn.lstm`.
 
-Captures and queries can be combined. Their selected conversions form a union:
-
-```text
-captures=dnn.linear queries=aten.mm
-```
-
-When neither option is supplied, DNN capture is skipped and Torch-MLIR handles
-the complete program normally.
-
-To inspect every registered mapping:
+Selectors form a union and can be combined:
 
 ```bash
-<dnn-mlir-build>/bin/dnn-opt --list-available-queries
+build/bin/dnn-mlir-opt \
+  --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.linear queries=aten.mm' \
+  input.mlir
 ```
 
-The output is grouped by family:
+Use `captures=all` or `queries=all` to enable every registered conversion. If
+neither selector is supplied, DNN capture is skipped and Torch-MLIR handles the
+complete program.
 
-```text
-Recurrent:
-  Capture: dnn.lstm
-  Queries:
-    aten.lstm.input
-    aten.lstm.data
+List the authoritative capture and query registry with:
 
-  Capture: dnn.gru
-  Queries:
-    aten.gru.input
-    aten.gru.data
+```bash
+build/bin/dnn-mlir-opt --list-available-queries
 ```
 
-## Supported Operations
+## Supported operations
 
-| Family | DNN operations | Notes |
+| Family | DNN operations | Coverage |
 | --- | --- | --- |
-| Matrix | `dnn.mm` | Rank-two matrix multiplication |
+| Activation | `dnn.relu`, `dnn.gelu`, `dnn.softmax`, and others | Individual operations for activation, softmax, and backward forms |
 | Affine | `dnn.linear` | Linear transformation with optional bias |
-| Activation | `dnn.relu`, `dnn.gelu`, `dnn.softmax`, and others | Individual operations for 40 activation and softmax forms |
-| Convolution | `dnn.convolution` | Convolution, transposed convolution, grouped convolution, and backward forms |
-| Recurrent | `dnn.lstm`, `dnn.gru`, `dnn.rnn` | Padded and packed inputs; tanh and ReLU vanilla RNNs |
+| Attention | `dnn.scaled_dot_product_attention` | Mask, scale, and causal configuration |
+| Convolution | `dnn.convolution` | Standard, transposed, grouped, and backward forms |
+| Elementwise | `dnn.add`, `dnn.mul` | Tensor operations with broadcasting |
+| Embedding | `dnn.embedding` | Learned table lookup |
+| Matrix | `dnn.mm`, `dnn.matmul` | Rank-two and rank-polymorphic multiplication |
+| Normalization | `dnn.batch_norm`, `dnn.layer_norm` | Batch and layer normalization |
+| Pooling | `dnn.max_pool2d`, `dnn.adaptive_avg_pool2d` | Spatial and adaptive pooling |
+| Recurrent | `dnn.lstm`, `dnn.gru`, `dnn.rnn` | Padded and packed inputs; tanh and ReLU RNNs |
+| Shape | `dnn.flatten` | Contiguous-dimension flattening |
 
-The optimizer's query listing is the authoritative inventory of supported
-Torch-to-DNN mappings.
+The registry printed by `--list-available-queries` is the exact, current list
+of source-to-DNN mappings. Full-model regression inputs currently cover
+ResNet-18, MobileNetV3, ViT-B/16, BERT Base, and GPT-2 Small.
 
-## Build
+## Build and test
 
 ### Requirements
 
 - CMake 3.22 or newer
 - Ninja
-- An initialized Torch-MLIR submodule and compatible build
-- `ccache` is recommended
+- a C++17 compiler
+- the pinned Torch-MLIR submodule and its LLVM/MLIR dependencies
+- `ccache` (recommended)
 
-Clone the repository with its Torch-MLIR submodule:
+Clone the repository and all nested dependencies:
 
 ```bash
-git clone --recurse-submodules <repository-url>
+git clone --recurse-submodules https://github.com/PlatinumCD/dnn-mlir.git
+cd dnn-mlir
 ```
 
-For an existing clone:
+If the repository was cloned without submodules:
 
 ```bash
 git submodule update --init --recursive
 ```
 
-Build `externals/torch-mlir` following its upstream instructions. Torch-MLIR
-and DNN-MLIR are both normal out-of-tree CMake projects: their build
-directories may be placed anywhere and are never created implicitly.
+Build `externals/torch-mlir` using its
+[upstream development instructions](https://github.com/llvm/torch-mlir/blob/main/docs/development.md).
+DNN-MLIR is tested against the exact Torch-MLIR and LLVM revisions pinned by
+the submodule; other revisions are not guaranteed to be compatible.
 
-```text
-dnn-mlir/
-├── cmake/
-├── externals/
-│   └── torch-mlir/  # Pinned upstream submodule
-├── include/
-├── lib/
-├── test/
-└── tools/
-```
-
-Configure DNN-MLIR with the locations of the MLIR and LLVM packages produced by
-your chosen Torch-MLIR build directory:
+Then configure DNN-MLIR against that Torch-MLIR build:
 
 ```bash
-cmake -G Ninja -S <dnn-mlir-source> -B <dnn-mlir-build> \
-  -DMLIR_DIR=<torch-mlir-build>/lib/cmake/mlir \
-  -DLLVM_DIR=<torch-mlir-build>/lib/cmake/llvm \
-  -DLLVM_EXTERNAL_LIT=<torch-mlir-build>/bin/llvm-lit \
+export TORCH_MLIR_BUILD=/absolute/path/to/torch-mlir-build
+
+cmake -G Ninja -S . -B build \
+  -DMLIR_DIR="$TORCH_MLIR_BUILD/lib/cmake/mlir" \
+  -DLLVM_DIR="$TORCH_MLIR_BUILD/lib/cmake/llvm" \
+  -DLLVM_EXTERNAL_LIT="$TORCH_MLIR_BUILD/bin/llvm-lit" \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
 
-cmake --build <dnn-mlir-build> -j2
-cmake --build <dnn-mlir-build> --target check-dnn-mlir -j2
+cmake --build build --parallel 2
+cmake --build build --target check-dnn-mlir --parallel 2
 ```
 
-DNN-MLIR infers the Torch-MLIR build root from `MLIR_DIR`. For a nonstandard
-layout, set `DNN_MLIR_TORCH_MLIR_BINARY_DIR` explicitly.
+DNN-MLIR normally infers the Torch-MLIR build root from `MLIR_DIR`. Set
+`DNN_MLIR_TORCH_MLIR_BINARY_DIR` explicitly when using a nonstandard layout.
 
-## Usage
+The test target covers dialect verification, individual conversions,
+integrated pipelines, full-model capture snapshots, installation, and a
+downstream CMake consumer. Numerical reference-backend tests are enabled when a
+compatible PyTorch, NumPy, and Torch-MLIR Python environment is available.
 
-Preserve all supported LSTM forms and lower everything else toward Linalg:
+## Install
+
+Install the optimizer, headers, libraries, and CMake package into a standalone
+prefix:
 
 ```bash
-<dnn-mlir-build>/bin/dnn-opt \
-  --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.lstm' \
-  input.mlir
+cmake --install build --prefix /absolute/path/to/dnn-mlir-install
 ```
 
-Capture one exact Torch form:
+A downstream compiler can consume the exported targets with:
 
-```bash
-<dnn-mlir-build>/bin/dnn-opt \
-  --dnn-backend-to-linalg-on-tensors-backend-pipeline='queries=aten.gru.data' \
-  input.mlir
+```cmake
+find_package(DNNMLIR CONFIG REQUIRED)
+
+target_link_libraries(my-compiler PRIVATE
+  DNNMLIR::DNNIR
+  DNNMLIR::DNNTorchToDNN
+)
 ```
 
-## Project Structure
+Because Torch-MLIR currently exposes the required C++ components as build-tree
+archives, downstream projects must also provide compatible Torch-MLIR source
+and build trees through `DNN_MLIR_TORCH_MLIR_SOURCE_DIR` and
+`DNN_MLIR_TORCH_MLIR_BINARY_DIR`.
+
+## Design contracts
+
+### Value semantics
+
+Every `dnn.*` operation is functional and value-semantic. DNN operations do
+not mutate operands or carry PyTorch aliasing semantics. In-place Torch
+operations are functionalized before capture:
+
+```text
+aten.relu_       -> Torch functionalization -> aten.relu       -> dnn.relu
+aten.add_.Tensor -> Torch functionalization -> aten.add.Tensor -> dnn.add
+```
+
+Direct in-place-to-DNN registrations are intentionally excluded from the
+capture registry.
+
+### Backend boundary
+
+Successful pipeline output contains builtin ranked tensors and may contain
+`dnn`, Linalg, tensor, arithmetic, and control-flow operations. It must not
+contain Torch operations, Torch types, conversion bridges, or unresolved
+casts. Captured `dnn.*` operations remain high level.
+
+### Numerical validation
+
+Semantic tests compare eager PyTorch execution with DNN capture followed by a
+test-only restoration to Torch and Torch-MLIR reference-backend execution:
+
+```text
+PyTorch eager
+    compared with
+Torch-MLIR import -> DNN capture -> test-only restoration
+                  -> Linalg lowering -> reference execution
+```
+
+Restoration exists only to validate capture semantics; it is not a production
+DNN-to-Linalg lowering.
+
+## Repository layout
 
 ```text
 dnn-mlir/
-├── cmake/                         # Dependency and build integration
+├── cmake/                         # Build and package integration
 ├── externals/
 │   └── torch-mlir/                # Pinned upstream submodule
 ├── include/dnn-mlir/
-│   ├── Conversion/TorchToDNN/  # Pass, pipeline, and registry interfaces
-│   └── Dialect/DNN/IR/         # DNN dialect and operation definitions
+│   ├── Conversion/TorchToDNN/     # Public conversion interfaces
+│   └── Dialect/DNN/IR/            # Dialect and operation definitions
 ├── lib/
-│   ├── Conversion/TorchToDNN/  # Torch query implementations by family
-│   └── Dialect/DNN/IR/         # Dialect implementation and verification
+│   ├── Conversion/TorchToDNN/     # Query implementations by operation family
+│   └── Dialect/DNN/IR/            # Dialect implementation and verification
 ├── test/
-│   ├── CLI/
-│   ├── Conversion/
-│   ├── Dialect/
-│   └── Pipeline/
-└── tools/dnn-opt/              # Standalone optimizer driver
+│   ├── Conversion/                # Per-operation conversion tests
+│   ├── Models/                    # Full-model capture snapshots
+│   ├── Pipeline/                  # Integrated pipeline tests
+│   └── Semantics/                 # Numerical equivalence tests
+└── tools/dnn-mlir-opt/            # Standalone optimizer
 ```
 
-## Project Status
+## Current limitations
 
-DNN-MLIR is an early-stage compiler project. It currently provides a working
-high-level capture layer and mixed DNN/Linalg pipeline with regression coverage.
-
-It does not yet provide:
+DNN-MLIR does not yet provide:
 
 - a DNN runtime or executable backend;
-- DNN-to-hardware or DNN-to-Linalg lowering;
-- complete semantic, shape, and type verification for every DNN operation; or
-- a DNN-aware replacement for Torch-MLIR's final backend verifier.
+- production DNN-to-hardware or DNN-to-Linalg lowering;
+- numerical coverage for every registered operation;
+- complete operation-specific shape and type verification; or
+- a stable public API or compatibility guarantee across Torch-MLIR revisions.
 
-These boundaries are intentional: the current project establishes the dialect,
-capture model, and integration point on which those components can be built.
+The current project establishes the dialect, capture model, verification
+boundary, and integration layer on which those components can be built.

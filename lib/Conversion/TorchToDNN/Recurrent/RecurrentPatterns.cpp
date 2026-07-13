@@ -86,6 +86,10 @@ public:
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
+    if (!hasValueSemanticsForCapture(op))
+      return rewriter.notifyMatchFailure(
+          op, "DNN capture requires functional value semantics");
+
     auto name = op->getAttrOfType<StringAttr>("name");
     if (!name || normalizeOperationName(name.getValue()) != operationName)
       return failure();

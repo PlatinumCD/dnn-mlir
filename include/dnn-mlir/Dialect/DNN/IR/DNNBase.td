@@ -13,8 +13,16 @@ def DNN_Dialect : Dialect {
   }];
 }
 
+class DNNOpTrait<string name> : NativeOpTrait<""> {
+  let trait = name;
+  let cppNamespace = "::mlir::dnn::OpTrait";
+}
+
+def DNN_ValueSemantics : DNNOpTrait<"ValueSemantics">;
+def DNN_ParameterMetadata : DNNOpTrait<"ParameterMetadata">;
+
 class DNN_Op<string mnemonic, list<Trait> traits = []>
-    : Op<DNN_Dialect, mnemonic, traits>;
+    : Op<DNN_Dialect, mnemonic,
+         !listconcat([DNN_ValueSemantics], traits)>;
 
 #endif // DNN_MLIR_DIALECT_DNN_IR_DNNBASE_TD
-

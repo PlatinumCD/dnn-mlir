@@ -8,6 +8,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "dnn-mlir/Dialect/DNN/IR/DNNDialect.h"
+#include "dnn-mlir/Dialect/DNN/IR/DNNTraits.h"
 
 #define GET_OP_CLASSES
 #include "dnn-mlir/Dialect/DNN/IR/DNNOps.h.inc"

@@ -1,4 +1,4 @@
-// RUN: dnn-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.convolution' %s | FileCheck %s
+// RUN: dnn-mlir-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.convolution' %s | FileCheck %s
 
 module {
   func.func private @__torch__.Conv.forward(

@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 func.func @convert_aten_logsigmoid(%input: !torch.vtensor<[2,4],f32>) -> !torch.vtensor<[2,4],f32> {
   %result = torch.aten.log_sigmoid %input

@@ -1,4 +1,4 @@
-// RUN: dnn-opt -convert-torch-to-dnn %s | FileCheck %s
+// RUN: dnn-mlir-opt -convert-torch-to-dnn %s | FileCheck %s
 
 func.func @convert_aten_hardtanh(%input: !torch.vtensor<[2,4],f32>) -> !torch.vtensor<[2,4],f32> {
   %min = torch.constant.float -1.0

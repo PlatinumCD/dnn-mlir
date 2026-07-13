@@ -12,6 +12,8 @@ std::unique_ptr<Pass> createConvertTorchToDNNPass();
 std::unique_ptr<Pass>
 createConvertTorchToDNNPass(llvm::ArrayRef<std::string> queries,
                             llvm::ArrayRef<std::string> captures);
+std::unique_ptr<Pass> createVerifyDNNBackendContractPass();
+std::unique_ptr<Pass> createTestRestoreDNNToTorchPass();
 void registerTorchToDNNPasses();
 
 } // namespace mlir::dnn

@@ -1,5 +1,7 @@
-// RUN: dnn-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.linear' %s | FileCheck %s
-// RUN: dnn-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.linear queries=aten.mm' %s | FileCheck %s --check-prefix=BOTH
+// RUN: dnn-mlir-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.linear' %s | FileCheck %s
+// RUN: dnn-mlir-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=dnn.linear queries=aten.mm' %s | FileCheck %s --check-prefix=BOTH
+// RUN: dnn-mlir-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='captures=all' %s | FileCheck %s --check-prefix=ALL
+// RUN: dnn-mlir-opt --dnn-backend-to-linalg-on-tensors-backend-pipeline='queries=all' %s | FileCheck %s --check-prefix=ALL
 
 // Verify capture-only selection and the union of captures with exact queries.
 
@@ -46,3 +48,10 @@ module attributes {torch.debug_module_name = "M"} {
 // BOTH-NOT: linalg.matmul
 // BOTH-NOT: torch.aten.linear
 // BOTH-NOT: torch.aten.mm
+
+// ALL-LABEL: func.func @forward
+// ALL: dnn.linear
+// ALL: dnn.mm
+// ALL-NOT: linalg.matmul
+// ALL-NOT: torch.aten.linear
+// ALL-NOT: torch.aten.mm

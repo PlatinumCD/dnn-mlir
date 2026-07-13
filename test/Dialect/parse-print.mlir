@@ -1,4 +1,4 @@
-// RUN: dnn-opt %s | FileCheck %s
+// RUN: dnn-mlir-opt %s | FileCheck %s
 
 func.func @parse_and_print(
     %lhs: tensor<2x3xf32>, %rhs: tensor<3x4xf32>,
@@ -47,4 +47,26 @@ func.func @parse_and_print_activation(%input: tensor<2x4xf32>)
   // CHECK-NOT: dnn.activation
   %result = dnn.relu %input : (tensor<2x4xf32>) -> tensor<2x4xf32>
   return %result : tensor<2x4xf32>
+}
+
+func.func @parse_and_print_broadcasted_matmul(
+    %lhs: tensor<2x1x3x4xf32>, %rhs: tensor<1x5x4x6xf32>)
+    -> tensor<2x5x3x6xf32> {
+  // CHECK: dnn.matmul
+  %result = dnn.matmul %lhs, %rhs
+      : tensor<2x1x3x4xf32>, tensor<1x5x4x6xf32>
+        -> tensor<2x5x3x6xf32>
+  return %result : tensor<2x5x3x6xf32>
+}
+
+func.func @parse_and_print_vector_matmul_forms(
+    %vector: tensor<4xf32>, %batched: tensor<2x4x6xf32>,
+    %matrix: tensor<2x3x4xf32>) -> (tensor<2x6xf32>, tensor<2x3xf32>) {
+  // CHECK: dnn.matmul
+  %vector_matrix = dnn.matmul %vector, %batched
+      : tensor<4xf32>, tensor<2x4x6xf32> -> tensor<2x6xf32>
+  // CHECK: dnn.matmul
+  %matrix_vector = dnn.matmul %matrix, %vector
+      : tensor<2x3x4xf32>, tensor<4xf32> -> tensor<2x3xf32>
+  return %vector_matrix, %matrix_vector : tensor<2x6xf32>, tensor<2x3xf32>
 }

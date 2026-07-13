@@ -4,6 +4,9 @@ include(CMakeParseArguments)
 
 function(_dnn_mlir_import_torch_library target archive)
   cmake_parse_arguments(ARG "" "" "LINK_LIBRARIES" ${ARGN})
+  if(TARGET ${target})
+    return()
+  endif()
   add_library(${target} STATIC IMPORTED GLOBAL)
   set_target_properties(${target} PROPERTIES
     IMPORTED_LOCATION "${_torch_library_dir}/${archive}"
@@ -14,9 +17,10 @@ function(_dnn_mlir_import_torch_library target archive)
 endfunction()
 
 function(dnn_mlir_configure_torch_mlir)
-  set(DNN_MLIR_TORCH_MLIR_SOURCE_DIR
-      "${PROJECT_SOURCE_DIR}/externals/torch-mlir"
-      CACHE PATH "Path to the Torch-MLIR source tree")
+  if(NOT DNN_MLIR_TORCH_MLIR_SOURCE_DIR)
+    message(FATAL_ERROR
+      "DNN_MLIR_TORCH_MLIR_SOURCE_DIR must name a Torch-MLIR source tree")
+  endif()
 
   if(NOT DEFINED DNN_MLIR_TORCH_MLIR_BINARY_DIR)
     get_filename_component(_default_torch_binary_dir
@@ -60,7 +64,8 @@ function(dnn_mlir_configure_torch_mlir)
     if(NOT EXISTS "${required_path}")
       message(FATAL_ERROR
         "Required Torch-MLIR artifact not found: ${required_path}\n"
-        "Set DNN_MLIR_TORCH_MLIR_BINARY_DIR to a compatible build tree.")
+        "Set DNN_MLIR_TORCH_MLIR_SOURCE_DIR and "
+        "DNN_MLIR_TORCH_MLIR_BINARY_DIR to compatible trees.")
     endif()
   endforeach()
 

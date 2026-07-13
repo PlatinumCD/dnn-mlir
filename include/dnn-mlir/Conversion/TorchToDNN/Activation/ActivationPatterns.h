@@ -24,7 +24,6 @@ namespace mlir::dnn::torch_to_dnn {
   X(Prelu, "aten.prelu", "dnn.prelu") \
   X(Relu, "aten.relu", "dnn.relu") \
   X(Relu6, "aten.relu6", "dnn.relu6") \
-  X(ReluInplace, "aten.relu_", "dnn.relu_inplace") \
   X(Rrelu, "aten.rrelu", "dnn.rrelu") \
   X(RreluWithNoiseFunctional, "aten.rrelu_with_noise_functional", \
     "dnn.rrelu_with_noise_functional") \
@@ -64,6 +63,9 @@ DNN_ACTIVATION_PATTERN_LIST(DNN_DECLARE_ACTIVATION_PATTERN)
 void populateNamedActivationPattern(RewritePatternSet &patterns,
                                     llvm::ArrayRef<std::string> selectedOperations,
                                     llvm::StringRef operationName);
+void populateDecomposedGeluFusionPatterns(
+    RewritePatternSet &patterns,
+    llvm::ArrayRef<std::string> selectedOperations);
 
 } // namespace mlir::dnn::torch_to_dnn
 

@@ -1,5 +1,8 @@
 add_mlir_conversion_library(DNNTorchToDNN
   CaptureRegistry.cpp
+  StructuredOpPatterns.cpp
+  Attention/AttentionRegistry.cpp
+  Attention/ConvertAtenScaledDotProductAttention.cpp
   Convolution/ConvolutionPatterns.cpp
   Convolution/ConvolutionRegistry.cpp
   Convolution/ConvertAtenConv1d.cpp
@@ -16,6 +19,20 @@ add_mlir_conversion_library(DNNTorchToDNN
   Convolution/ConvertAtenUnderscoreConvolution.cpp
   Convolution/ConvertAtenUnderscoreConvolutionDeprecated.cpp
   Convolution/ConvertAtenConvolutionBackward.cpp
+  Embedding/EmbeddingRegistry.cpp
+  Embedding/ConvertAtenEmbedding.cpp
+  Elementwise/ElementwiseRegistry.cpp
+  Elementwise/ConvertAtenAddTensor.cpp
+  Elementwise/ConvertAtenMulTensor.cpp
+  Normalization/NormalizationRegistry.cpp
+  Normalization/ConvertAtenBatchNorm.cpp
+  Normalization/ConvertAtenNativeBatchNorm.cpp
+  Normalization/ConvertAtenNativeBatchNormLegitNoTraining.cpp
+  Normalization/ConvertAtenLayerNorm.cpp
+  Normalization/FuseDecomposedLayerNorm.cpp
+  Pooling/PoolingRegistry.cpp
+  Pooling/ConvertAtenMaxPool2d.cpp
+  Pooling/ConvertAtenAdaptiveAvgPool2d.cpp
   Recurrent/RecurrentPatterns.cpp
   Recurrent/RecurrentRegistry.cpp
   Recurrent/ConvertAtenLstm.cpp
@@ -26,6 +43,8 @@ add_mlir_conversion_library(DNNTorchToDNN
   Recurrent/ConvertAtenRnnTanhData.cpp
   Recurrent/ConvertAtenRnnReluInput.cpp
   Recurrent/ConvertAtenRnnReluData.cpp
+  Shape/ShapeRegistry.cpp
+  Shape/ConvertAtenFlattenUsingInts.cpp
   Activation/ActivationPatterns.cpp
   Activation/ActivationRegistry.cpp
   Activation/ConvertAtenCelu.cpp
@@ -42,7 +61,6 @@ add_mlir_conversion_library(DNNTorchToDNN
   Activation/ConvertAtenPrelu.cpp
   Activation/ConvertAtenRelu.cpp
   Activation/ConvertAtenRelu6.cpp
-  Activation/ConvertAtenReluInplace.cpp
   Activation/ConvertAtenRrelu.cpp
   Activation/ConvertAtenRreluWithNoiseFunctional.cpp
   Activation/ConvertAtenSelu.cpp
@@ -68,17 +86,42 @@ add_mlir_conversion_library(DNNTorchToDNN
   Activation/ConvertAtenSoftplusBackward.cpp
   Activation/ConvertAtenTanhBackward.cpp
   Activation/ConvertAtenThresholdBackward.cpp
+  Activation/FuseDecomposedGelu.cpp
   Affine/ConvertAtenLinear.cpp
   DNNBackendToLinalgPipeline.cpp
+  Matrix/ConvertAtenMatmul.cpp
   Matrix/ConvertAtenMm.cpp
+  Matrix/MatrixRegistry.cpp
+  TestRestoreDNNToTorch.cpp
   TorchToDNN.cpp
+  VerifyDNNBackendContract.cpp
 
   LINK_LIBS PUBLIC
   DNNIR
+  MLIRArithDialect
   MLIRFuncDialect
+  MLIRFuncInlinerExtension
   MLIRIR
+  MLIRLinalgDialect
+  MLIROptLib
+  MLIRParser
   MLIRPass
+  MLIRSupport
+  MLIRTensorDialect
   MLIRTransforms
+  TorchMLIRConversionPasses
+  TorchMLIRConversionUtils
+  TorchMLIRTMTensorDialect
   TorchMLIRTorchConversionDialect
+  TorchMLIRTorchConversionPasses
   TorchMLIRTorchDialect
+  TorchMLIRTorchOnnxToTorch
+  TorchMLIRTorchPasses
+  TorchMLIRTorchUtils
+)
+
+target_include_directories(DNNTorchToDNN PUBLIC
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
+  $<INSTALL_INTERFACE:include>
 )
